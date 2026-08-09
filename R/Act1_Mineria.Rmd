@@ -1,0 +1,245 @@
+---
+title: "Actividad 1 Mineria de Datos"
+author: "Grupo 2"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Minería de Datos - Análisis preliminar del dataset Taxis NYC
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+library(dplyr)
+library(tidytext)
+library(ggplot2)
+library(openxlsx)
+library(forcats)
+library(tidyr)
+library(readxl)
+library(syuzhet)
+library(wordcloud)
+library(tm)
+library(widyr)
+library(igraph)
+library(ggraph)
+library(influential)
+library(topicmodels)
+library(reshape2)
+library(arrow)
+
+
+setwd("D:/LaSalle/S2/MineriaDatos")
+TaxisNY <- read_parquet("yellow_tripdata_2017_01.parquet")
+```
+
+
+# -----------------------------------------------------------------------------
+# Creación de una muestra para análisis exploratorio
+
+```{r}
+set.seed(123)
+
+TaxisNY_muestra <- TaxisNY %>%
+  sample_n(100000)
+```
+
+### Verificar dimensiones
+```{r}
+dim(TaxisNY_muestra)
+```
+
+
+# Análisis preliminar del dataset
+# -----------------------------------------------------------------------------
+
+### Dimensiones del dataset
+```{r}
+dim(TaxisNY_muestra)
+```
+
+### Estructura y tipos de variables
+```{r}
+str(TaxisNY_muestra)
+```
+
+### Resumen estadístico general
+```{r}
+summary(TaxisNY_muestra)
+```
+
+
+
+# -----------------------------------------------------------------------------
+### Tabla de tipos de variables
+```{r}
+tipos_variables <- data.frame( Variable = names(TaxisNY_muestra), Tipo = sapply(TaxisNY_muestra, function(x) class(x)[1])) 
+tipos_variables
+
+```
+
+
+# -----------------------------------------------------------------------------
+### Análisis de valores faltantes
+
+```{r}
+faltantes <- sapply(TaxisNY_muestra, function(x) sum(is.na(x)))
+
+porcentaje_faltantes <- round(
+  (faltantes / nrow(TaxisNY_muestra)) * 100, 2
+)
+
+tabla_faltantes <- data.frame(
+  Variable = names(faltantes),
+  Faltantes = faltantes,
+  Porcentaje = porcentaje_faltantes
+) %>%
+  arrange(desc(Porcentaje))
+
+tabla_faltantes
+
+# Gráfico de faltantes
+ggplot(tabla_faltantes,
+       aes(x = reorder(Variable, Porcentaje),
+           y = Porcentaje)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Porcentaje de valores faltantes",
+       x = "Variable",
+       y = "Porcentaje (%)") +
+  theme_minimal()
+```
+
+
+
+# -----------------------------------------------------------------------------
+### Detección de duplicados
+
+```{r}
+duplicados <- sum(duplicated(TaxisNY_muestra))
+
+duplicados
+
+porcentaje_duplicados <- round(
+  duplicados / nrow(TaxisNY_muestra) * 100, 4
+)
+
+porcentaje_duplicados
+```
+
+
+
+# -----------------------------------------------------------------------------
+# Identificación de posibles outliers
+
+
+### Seleccionar variables numéricas
+```{r}
+numericas <- TaxisNY_muestra %>%
+  select(where(is.numeric))
+
+names(numericas)
+```
+
+
+### Función para detectar outliers mediante el método IQR
+```{r}
+detectar_outliers <- function(x) {
+  q1 <- quantile(x, 0.25, na.rm = TRUE)
+  q3 <- quantile(x, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+
+  limite_inferior <- q1 - 1.5 * iqr
+  limite_superior <- q3 + 1.5 * iqr
+
+  sum(x < limite_inferior | x > limite_superior,
+      na.rm = TRUE)
+}
+
+outliers <- sapply(numericas, detectar_outliers)
+
+tabla_outliers <- data.frame(
+  Variable = names(outliers),
+  Outliers = outliers,
+  Porcentaje = round(outliers / nrow(TaxisNY_muestra) * 100, 2)
+) %>%
+  arrange(desc(Porcentaje))
+
+tabla_outliers
+```
+
+
+# -----------------------------------------------------------------------------
+# Visualización de outliers
+
+
+### Distancia del viaje
+```{r}
+ggplot(TaxisNY_muestra, aes(y = trip_distance)) +
+  geom_boxplot(fill = "orange") +
+  labs(title = "Valores atípicos en trip_distance") +
+  theme_minimal()
+```
+
+
+### Tarifa
+```{r}
+ggplot(TaxisNY_muestra, aes(y = fare_amount)) +
+  geom_boxplot(fill = "tomato") +
+  labs(title = "Valores atípicos en fare_amount") +
+  theme_minimal()
+```
+
+
+### Total pagado
+```{r}
+ggplot(TaxisNY_muestra, aes(y = total_amount)) +
+  geom_boxplot(fill = "seagreen") +
+  labs(title = "Valores atípicos en total_amount") +
+  theme_minimal()
+```
+
+
+# -----------------------------------------------------------------------------
+### Resumen general del análisis
+
+```{r}
+cat("Registros analizados:", nrow(TaxisNY_muestra), "\n")
+cat("Número de variables:", ncol(TaxisNY_muestra), "\n")
+cat("Duplicados encontrados:", duplicados, "\n")
+cat("Máximo porcentaje de faltantes:", max(porcentaje_faltantes), "%\n")
+```
+
+# -----------------------------------------------------------------------------
+# Estrategia de limpieza seleccionada
+
+
+### 1. Eliminar duplicados exactos
+```{r}
+TaxisNY_limpio <- TaxisNY_muestra %>%
+  distinct()
+```
+
+
+### 2. Imputar faltantes numéricos con la mediana
+```{r}
+TaxisNY_limpio <- TaxisNY_limpio %>%
+  mutate(across(where(is.numeric),
+                ~ ifelse(is.na(.),
+                         median(., na.rm = TRUE),
+                         .)))
+```
+
+
+### Verificar resultado final
+```{r}
+summary(TaxisNY_limpio)
+```
+
+
+# -----------------------------------------------------------------------------
+# Conclusión
+El análisis preliminar permitió identificar la estructura del dataset, la calidad de los datos y la presencia de valores extremos. La estrategia de limpieza seleccionada busca equilibrar la conservación de información con la reducción de posibles sesgos. Se decidió **eliminar** duplicados exactos, **imputar** valores faltantes únicamente cuando su proporción sea baja y **conservar** los outliers que resulten coherentes con el contexto operativo del servicio de taxis de Nueva York. El escalamiento se reserva para etapas posteriores de modelado, donde la diferencia de magnitudes entre variables pueda afectar el desempeño de los algoritmos de minería de datos.
+
